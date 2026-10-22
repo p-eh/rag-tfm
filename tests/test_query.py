@@ -139,7 +139,7 @@ def test_ask_rag_builds_context_prompt_and_dedupes_sources(tmp_path, monkeypatch
     assert result["usage"] == FAKE_USAGE
     assert len(fake_llm.messages_seen) == 1
     system_message, user_message = fake_llm.messages_seen[0]
-    assert system_message.content == query.load_system_prompt()[0]
+    assert system_message.content == query.build_chat_messages("", "")[0]
     assert "How do I set up a new filter?" in user_message.content
     assert "Soak the cartridge for 15 minutes." in user_message.content
     assert "Rinse under running water." in user_message.content
@@ -180,7 +180,7 @@ def test_ask_full_doc_sends_the_manual_in_full(tmp_path, monkeypatch):
     assert result["usage"] == FAKE_USAGE
     assert len(fake_llm.messages_seen) == 1
     system_message, user_message = fake_llm.messages_seen[0]
-    assert system_message.content == query.load_system_prompt()[0]
+    assert system_message.content == query.build_chat_messages("", "")[0]
     assert "How do I care for the filter?" in user_message.content
     assert "Soak the cartridge for 15 minutes before use." in user_message.content
 

@@ -2,8 +2,13 @@
 Langfuse client or network calls, matching the mocked style of test_query.py.
 """
 
+import types
+
 import langfuse
 from openinference.instrumentation import llama_index as oi_llama_index
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from src import config, tracing
 
@@ -35,12 +40,15 @@ def test_init_tracing_constructs_client_and_instruments_once(monkeypatch):
             instrument_calls.append(True)
 
     monkeypatch.setattr(oi_llama_index, "LlamaIndexInstrumentor", FakeInstrumentor)
+    linker_calls = []
+    monkeypatch.setattr(tracing, "_register_prompt_linker", lambda: linker_calls.append(True))
 
     tracing.init_tracing()
     tracing.init_tracing()  # second call must not re-instrument
 
     assert len(constructed) == 2
     assert len(instrument_calls) == 1
+    assert len(linker_calls) == 1
 
 
 def test_flush_tracing_is_a_noop_without_credentials(monkeypatch):
@@ -115,3 +123,35 @@ def test_traced_span_delegates_to_client(monkeypatch):
     assert calls == [
         {"name": "extract_manual_text", "as_type": "span", "input": {"manual_path": "foo.pdf"}}
     ]
+
+
+def _spans_from(processor, prompt):
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(processor)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("test")
+
+    with tracing.linked_prompt(prompt), tracer.start_as_current_span("Anthropic.chat"):
+        pass
+    with tracer.start_as_current_span("after_block"):
+        pass
+    return {span.name: dict(span.attributes) for span in exporter.get_finished_spans()}
+
+
+def test_linked_prompt_tags_spans_started_inside_the_block():
+    prompt = types.SimpleNamespace(name="rag-tfm-chat", version=3)
+
+    spans = _spans_from(tracing._prompt_link_processor(), prompt)
+
+    assert spans["Anthropic.chat"] == {
+        "langfuse.observation.prompt.name": "rag-tfm-chat",
+        "langfuse.observation.prompt.version": 3,
+    }
+    assert spans["after_block"] == {}
+
+
+def test_linked_prompt_none_tags_nothing():
+    spans = _spans_from(tracing._prompt_link_processor(), None)
+
+    assert spans["Anthropic.chat"] == {}

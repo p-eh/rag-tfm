@@ -21,3 +21,10 @@
 - [x] 4.1 Add a short note stating the local files are now the offline fallback, not the live source of truth — placed in `src/prompts.py` next to the path constants rather than inside the `.md` files themselves, since their full content is read verbatim as fallback prompt text and a comment there would leak into what's sent to the LLM
 - [x] 4.2 Update `requirements.txt` only if the migration script needs anything beyond the already-installed `langfuse` package — confirmed no change needed, `langfuse` v4.14.4 already installed includes prompt management in the same client
 - [x] 4.3 Run existing `tests/` suite, confirm nothing broke — 26 passed, 3 skipped (opt-in live tests). Added an explicit `monkeypatch.setattr(tracing, "is_configured", lambda: False)` in every mocked test that now calls prompt-loading, since real Langfuse credentials in this dev `.env` would otherwise make the mocked suite silently hit the real Langfuse API
+
+## 5. Review follow-ups (PR #12)
+
+- [x] 5.1 Print a warning, once per process, when the Langfuse fetch fails and the local files are used; stay silent when Langfuse isn't configured — covered by `tests/test_prompts.py`
+- [x] 5.2 Add `tests/test_prompts_live.py`, an opt-in (`RUN_LIVE_LANGFUSE_TESTS=1`) drift check between the local files and the `production` prompt — passed against the project's Langfuse account
+- [x] 5.3 Replace the two text prompts with one chat prompt, `rag-tfm-chat`; migration script updated and run, prompt created in Langfuse as v1 (`production`)
+- [x] 5.4 Link the generation natively via `tracing.linked_prompt()` and a span processor; remove the `llm_generation` span — verified on a real `ask_full_doc` trace that `Anthropic.chat` carries `promptName: rag-tfm-chat`, `promptVersion: 1`

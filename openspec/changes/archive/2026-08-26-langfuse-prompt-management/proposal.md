@@ -5,7 +5,7 @@ Prompts (`SYSTEM_PROMPT.md`, `PROMPT_TEMPLATE.md`) currently live as local files
 ## What Changes
 
 - `src/prompts.py` fetches the system prompt and context-answer template from Langfuse (label `production`) instead of reading `SYSTEM_PROMPT.md` / `PROMPT_TEMPLATE.md` from disk.
-- A one-time migration step creates both prompts in Langfuse from the current file contents, labeled `production`.
+- A one-time migration step creates one chat prompt in Langfuse (system message + context-answer message) from the current file contents, labeled `production`.
 - Prompt variables use Langfuse's `{{var}}` syntax (already the case: `{{context}}`, `{{question}}`).
 - Each trace records the Langfuse prompt name/version that produced its generation, via the existing tracing instrumentation (`src/tracing.py`).
 - **BREAKING**: `SYSTEM_PROMPT.md` and `PROMPT_TEMPLATE.md` stop being read at runtime once migrated (kept in the repo only as the historical/fallback source, per graceful-degradation below — not as the live source of truth).

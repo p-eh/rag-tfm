@@ -7,9 +7,14 @@ Heavy imports are kept inside the functions that need them, not at module
 level, matching the rest of `src/`.
 """
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 from src import config
 
 _instrumented = False
+
+_linked_prompt: ContextVar = ContextVar("linked_prompt", default=None)
 
 
 def is_configured() -> bool:
@@ -39,7 +44,42 @@ def init_tracing() -> None:
         from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
 
         LlamaIndexInstrumentor().instrument()
+        _register_prompt_linker()
         _instrumented = True
+
+
+def _register_prompt_linker() -> None:
+    from opentelemetry import trace
+
+    trace.get_tracer_provider().add_span_processor(_prompt_link_processor())
+
+
+def _prompt_link_processor():
+    """Span processor that tags each span started inside `linked_prompt(...)`
+    with that prompt's name and version.
+    """
+    from opentelemetry.sdk.trace import SpanProcessor
+
+    class _PromptLinkProcessor(SpanProcessor):
+        def on_start(self, span, parent_context=None):
+            prompt = _linked_prompt.get()
+            if prompt is not None:
+                span.set_attribute("langfuse.observation.prompt.name", prompt.name)
+                span.set_attribute("langfuse.observation.prompt.version", prompt.version)
+
+    return _PromptLinkProcessor()
+
+
+@contextmanager
+def linked_prompt(prompt):
+    """Links the LLM generation started inside this block to Langfuse `prompt`
+    (None links nothing), via `_prompt_link_processor` as the span starts.
+    """
+    token = _linked_prompt.set(prompt)
+    try:
+        yield
+    finally:
+        _linked_prompt.reset(token)
 
 
 def flush_tracing() -> None:
