@@ -8,6 +8,7 @@ Anthropic connection.
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from src import config
@@ -32,42 +33,69 @@ def _build_client():
     return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
+SEARCH_MAX_TOKENS = 8192
+MAX_SEARCH_CONTINUATIONS = 5
+
+
+class SearchIncompleteError(Exception):
+    """Raised when the search turn stops before producing a final answer."""
+
+
 def search_candidates(product_name: str) -> list[dict]:
-    """Ask Claude to search the web and rank candidate manual PDFs for
+    """Ask the model to search the web and rank candidate manual PDFs for
     `product_name`. Returns a list of {url, title, confidence, note} dicts,
     most likely correct first; empty if nothing plausible was found.
+
+    Raises SearchIncompleteError if the turn is cut off before finishing.
     """
     client = _build_client()
-    response = client.messages.create(
-        model=config.ANTHROPIC_MODEL,
-        max_tokens=2048,
-        system=SEARCH_SYSTEM_PROMPT,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[{"role": "user", "content": f"Find the official manual for: {product_name}"}],
-    )
-    text = "".join(block.text for block in response.content if block.type == "text")
+    user_message = {"role": "user", "content": f"Find the official manual for: {product_name}"}
+    content = []
+    for _ in range(MAX_SEARCH_CONTINUATIONS):
+        # On pause_turn the server-side search loop resumes from the
+        # assistant content sent back so far.
+        messages = [user_message] + ([{"role": "assistant", "content": content}] if content else [])
+        response = client.messages.create(
+            model=config.ANTHROPIC_MODEL,
+            max_tokens=SEARCH_MAX_TOKENS,
+            system=SEARCH_SYSTEM_PROMPT,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=messages,
+        )
+        content = content + list(response.content)
+        if response.stop_reason != "pause_turn":
+            break
+
+    if response.stop_reason != "end_turn":
+        raise SearchIncompleteError(f"web search stopped early ({response.stop_reason})")
+
+    text = "\n".join(block.text for block in content if block.type == "text")
     return parse_candidates(text)
 
 
 def parse_candidates(text: str) -> list[dict]:
-    """Extract the JSON candidate array from Claude's reply text.
+    """Extract the JSON candidate array from the model's reply text.
 
-    Tolerates surrounding prose/markdown fences the model may add despite
-    being asked not to. Returns [] if no valid JSON array is present.
+    Prose between searches can contain stray brackets, so every `[` is tried
+    as the start of a JSON array and the last one that parses wins. Returns
+    [] if no valid JSON array is present.
     """
-    start = text.find("[")
-    end = text.rfind("]")
-    if start == -1 or end == -1 or end < start:
-        return []
+    decoder = json.JSONDecoder()
+    found = None
+    pos = text.find("[")
+    while pos != -1:
+        try:
+            value, end = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            pos = text.find("[", pos + 1)
+            continue
+        if isinstance(value, list):
+            found = value
+        pos = text.find("[", end)
 
-    try:
-        candidates = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
+    if found is None:
         return []
-
-    if not isinstance(candidates, list):
-        return []
-    return [c for c in candidates if isinstance(c, dict) and c.get("url")]
+    return [c for c in found if isinstance(c, dict) and c.get("url")]
 
 
 def needs_selection(candidates: list[dict]) -> bool:
@@ -75,7 +103,9 @@ def needs_selection(candidates: list[dict]) -> bool:
     anything else (multiple candidates, or one at less than high
     confidence) gets a numbered pick-list instead.
     """
-    return not (len(candidates) == 1 and candidates[0].get("confidence") == "high")
+    if len(candidates) != 1:
+        return True
+    return str(candidates[0].get("confidence", "")).strip().lower() != "high"
 
 
 def confirm_single(candidate: dict, input_func=input) -> dict | None:
@@ -115,6 +145,7 @@ def confirm_candidate(candidates: list[dict], input_func=input) -> dict | None:
 
 
 PDF_MAGIC = b"%PDF-"
+PDF_CONTENT_TYPES = {"application/pdf", "application/octet-stream"}
 
 
 class ManualDownloadError(Exception):
@@ -122,28 +153,50 @@ class ManualDownloadError(Exception):
 
 
 def is_pdf_response(content: bytes, content_type: str) -> bool:
-    """A candidate's URL can carry a `.pdf`-looking path yet actually serve
-    an HTML page (seen in practice with some manual-hosting sites) - check
-    both the declared content-type and the file's own magic bytes rather
-    than trusting either alone.
+    """Both must hold: the body starts with the PDF magic bytes, and the
+    declared media type is PDF or generic binary (some hosts serve PDFs as
+    `application/octet-stream`).
     """
-    return "pdf" in content_type.lower() or content.startswith(PDF_MAGIC)
+    media_type = content_type.split(";")[0].strip().lower()
+    return media_type in PDF_CONTENT_TYPES and content.startswith(PDF_MAGIC)
+
+
+def _slugify(text: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_." else "-" for c in text).strip("-.")
 
 
 def filename_for(candidate: dict, url: str) -> str:
-    from urllib.parse import urlparse
+    from urllib.parse import unquote, urlparse
 
-    name = Path(urlparse(url).path).name
+    name = Path(unquote(urlparse(url).path)).name
     if name.lower().endswith(".pdf"):
-        return name
-    title = candidate.get("title") or "manual"
-    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in title).strip("-")
+        stem = _slugify(name[: -len(".pdf")])
+        if stem:
+            return f"{stem}.pdf"
+    slug = _slugify(candidate.get("title") or "")
     return f"{slug or 'manual'}.pdf"
 
 
-def download_manual(candidate: dict, dest_dir: Path | None = None) -> Path:
+def unique_path(dest_dir: Path, filename: str, content: bytes) -> tuple[Path, bool]:
+    """Pick where to store `content` under `dest_dir` without clobbering a
+    different manual: reuse an existing file with identical bytes, otherwise
+    append -2, -3, ... to the stem. Returns (path, already_existed).
+    """
+    candidate = dest_dir / filename
+    stem, suffix = candidate.stem, candidate.suffix
+    counter = 2
+    while candidate.exists():
+        if candidate.read_bytes() == content:
+            return candidate, True
+        candidate = dest_dir / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate, False
+
+
+def download_manual(candidate: dict, dest_dir: Path | None = None) -> tuple[Path, bool]:
     """Fetch the confirmed candidate's URL and, once confirmed to actually
-    be a PDF, write it to `dest_dir` (default: config.MANUALS_DIR).
+    be a PDF, store it under `dest_dir` (default: config.MANUALS_DIR) via
+    unique_path. Returns (path, already_existed).
 
     Raises ManualDownloadError on any network failure or non-PDF response;
     nothing is written to disk unless the response passes validation.
@@ -166,20 +219,28 @@ def download_manual(candidate: dict, dest_dir: Path | None = None) -> Path:
         )
 
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / filename_for(candidate, url)
-    dest_path.write_bytes(response.content)
-    return dest_path
+    dest_path, already_existed = unique_path(
+        dest_dir, filename_for(candidate, url), response.content
+    )
+    if not already_existed:
+        dest_path.write_bytes(response.content)
+    return dest_path, already_existed
 
 
 def find_and_ingest(product_name: str, input_func=input) -> Path | None:
     """Search, confirm, download, and ingest a manual for `product_name`.
 
-    Returns the ingested manual's local path, or None if no candidate was
-    found or the user declined all of them.
+    Returns the ingested manual's local path, or None if the search was
+    incomplete, nothing was found, the user declined, or download/ingestion
+    failed.
     """
-    from src.ingest import build_index
+    from src.ingest import ingest_and_report
 
-    candidates = search_candidates(product_name)
+    try:
+        candidates = search_candidates(product_name)
+    except SearchIncompleteError as exc:
+        print(f"Search incomplete: {exc}")
+        return None
     if not candidates:
         print(f"No manual found for {product_name!r}.")
         return None
@@ -190,13 +251,18 @@ def find_and_ingest(product_name: str, input_func=input) -> Path | None:
         return None
 
     try:
-        manual_path = download_manual(candidate)
+        manual_path, already_existed = download_manual(candidate)
     except ManualDownloadError as exc:
         print(f"Download failed: {exc}")
         return None
 
-    build_index(manual_path)
-    print(f"Index ready for {manual_path} in {config.STORAGE_DIR}")
+    try:
+        ingest_and_report(manual_path)
+    except Exception as exc:
+        if not already_existed:
+            manual_path.unlink(missing_ok=True)
+        print(f"Ingestion failed for {manual_path.name}: {exc}")
+        return None
     return manual_path
 
 
@@ -207,7 +273,8 @@ def main() -> None:
     parser.add_argument("product_name", help="Product name to search a manual for")
     args = parser.parse_args()
 
-    find_and_ingest(args.product_name)
+    if find_and_ingest(args.product_name) is None:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

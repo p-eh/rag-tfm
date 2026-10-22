@@ -6,6 +6,8 @@
 
 - (Not designed yet.) Rough shape: an env-var-selected backend (e.g. `LLM_PROVIDER=anthropic|openai|ollama`), at least one fully local CUDA-accelerated option (e.g. Ollama), MVP default behavior unchanged when no override is set.
 
+- Also covers `src/find_manual.py` (manual discovery): it depends on Anthropic's server-side web search tool (`web_search_20250305`) and Anthropic-specific stop reasons (`pause_turn`), and its docstrings refer to "Claude" directly. A non-Anthropic backend needs its own web search source (provider-native search, or a separate search API feeding the same ranking prompt), and those references need making provider-neutral. Raised in PR #14 review.
+
 ## Capabilities
 
 ### New Capabilities

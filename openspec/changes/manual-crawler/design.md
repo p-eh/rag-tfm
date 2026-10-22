@@ -32,7 +32,7 @@ The LLM performs search, evaluates candidates against "is this the correct produ
 Alternative considered: a separate ranking pass after search (search call, then a second classification call per candidate). Rejected as unnecessary complexity for the number of candidates involved (a handful of web results) — one turn with the web search tool is sufficient for this scope.
 
 ### Download validated by content-type before handing off to ingestion
-After user confirmation, fetch the URL and check the response's content-type/magic bytes indicate a real PDF before writing it to `data/manuals/` and invoking ingestion. This satisfies the `manual-discovery` spec's "confirmed candidate is not a downloadable PDF" scenario without relying on the LLM's judgment alone (a page can look right but not actually serve a PDF).
+After user confirmation, fetch the URL and check that the response both starts with the PDF magic bytes and declares a PDF (or generic `application/octet-stream`) content-type before writing it to `data/manuals/` and invoking ingestion. This satisfies the `manual-discovery` spec's "confirmed candidate is not a downloadable PDF" scenario without relying on the LLM's judgment alone (a page can look right but not actually serve a PDF).
 
 ### CLI shape mirrors existing commands
 New entry point `python -m src.find_manual "<product name>"`, following the same `python -m src.<verb>` convention as `src.ingest` and `src.ask`. On confirmation it downloads to `data/manuals/` and then calls `src.ingest`'s existing ingestion function directly (in-process), rather than shelling out, printing the same "ready to query" confirmation ingestion already prints.
