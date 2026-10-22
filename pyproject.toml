@@ -14,4 +14,7 @@ select = ["E", "W", "F", "I", "UP", "B", "SIM", "C4", "N", "PTH", "RUF", "PLC041
 "src/vector_store.py" = ["PLC0415"]
 "src/tracing.py" = ["PLC0415"]
 "src/eval.py" = ["PLC0415"]
+"src/prompts.py" = ["PLC0415"]
+"scripts/migrate_prompts_to_langfuse.py" = ["PLC0415"]
 "tests/test_ask_live.py" = ["PLC0415"]
+"tests/test_prompts_live.py" = ["PLC0415"]

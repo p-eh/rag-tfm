@@ -7,7 +7,7 @@ at module level, so this module stays importable without the full stack.
 """
 
 from src import config, tracing, vector_store
-from src.prompts import NO_CONTEXT_MESSAGE, build_context_prompt, load_system_prompt
+from src.prompts import NO_CONTEXT_MESSAGE, build_chat_messages
 
 # Number of top-ranked chunks retrieved per question and passed to the LLM
 # as context in RAG mode (see ask_rag's similarity_top_k usage below).
@@ -52,21 +52,24 @@ def _usage_from_response(response) -> dict:
     return {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
 
 
-def _ask_with_context(user_prompt: str):
-    """Send SYSTEM_PROMPT.md as the system message and user_prompt as the
-    user turn. Used by ask_rag and ask_full_doc, not ask_no_context. Returns
+def _ask_with_context(question: str, context: str):
+    """Send the chat prompt's system and user messages, filled with question
+    and context. Used by ask_rag and ask_full_doc, not ask_no_context. Returns
     the raw llama_index ChatResponse so callers can read both the answer
     text and token usage.
     """
     from llama_index.core.llms import ChatMessage, MessageRole
 
+    system_message, user_message, prompt_source = build_chat_messages(question, context)
+
     llm = _build_llm()
-    return llm.chat(
-        [
-            ChatMessage(role=MessageRole.SYSTEM, content=load_system_prompt()),
-            ChatMessage(role=MessageRole.USER, content=user_prompt),
-        ]
-    )
+    with tracing.linked_prompt(prompt_source):
+        return llm.chat(
+            [
+                ChatMessage(role=MessageRole.SYSTEM, content=system_message),
+                ChatMessage(role=MessageRole.USER, content=user_message),
+            ]
+        )
 
 
 def _load_manual_text(manual_path) -> str:
@@ -92,9 +95,7 @@ def ask_rag(question: str, manual_path) -> dict:
     # answer split across non-adjacent chunks may read as disjoint fragments.
     contexts = [node.get_content() for node in nodes]
     context = "\n\n".join(contexts)
-    user_prompt = build_context_prompt(question, context)
-
-    response = _ask_with_context(user_prompt)
+    response = _ask_with_context(question, context)
 
     sources = sorted({node.metadata.get("file_name", "unknown") for node in nodes})
     return {
@@ -117,9 +118,7 @@ def ask_full_doc(question: str, manual_path) -> dict:
         if span is not None:
             # Full text is already in Anthropic.chat's prompt input; preview is enough here.
             span.update(output={"char_count": len(context), "preview": context[:200]})
-    user_prompt = build_context_prompt(question, context)
-
-    response = _ask_with_context(user_prompt)
+    response = _ask_with_context(question, context)
 
     return {
         "answer": response.message.content,
