@@ -64,6 +64,23 @@ python -m src.ask "How long should I soak a new filter cartridge before using it
 
 More example questions: [`data/sample-questions.md`](data/sample-questions.md).
 
+## Manual discovery
+
+If you don't already have a manual PDF, `find_manual` can locate one by
+product name: it searches the web with Claude's web search tool, shows you
+the candidate manual's URL for confirmation (or a numbered list when
+multiple are plausible), downloads the one you pick, and ingests it —
+equivalent to running `ingest` yourself, just without needing the PDF path
+up front.
+
+```bash
+python -m src.find_manual "Aquaflow 200 water filter"
+```
+
+This is a convenience layered on top of `ingest`, not a replacement for it —
+if you already have the manual's path, `python -m src.ingest <manual.pdf>`
+is still the direct route.
+
 ## Tracing
 
 Every `ask` invocation, in every mode, is traced end-to-end in

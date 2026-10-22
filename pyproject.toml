@@ -14,4 +14,6 @@ select = ["E", "W", "F", "I", "UP", "B", "SIM", "C4", "N", "PTH", "RUF", "PLC041
 "src/vector_store.py" = ["PLC0415"]
 "src/tracing.py" = ["PLC0415"]
 "src/eval.py" = ["PLC0415"]
+"src/find_manual.py" = ["PLC0415"]
 "tests/test_ask_live.py" = ["PLC0415"]
+"tests/test_find_manual_live.py" = ["PLC0415"]

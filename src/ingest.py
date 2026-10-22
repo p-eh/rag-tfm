@@ -34,6 +34,11 @@ def build_index(manual_path: Path) -> None:
     VectorStoreIndex.from_documents(documents, storage_context=storage_context)
 
 
+def ingest_and_report(manual_path: Path) -> None:
+    build_index(manual_path)
+    print(f"Index ready for {manual_path} in {config.STORAGE_DIR}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Ingest a single PDF manual into the vector index."
@@ -41,8 +46,7 @@ def main() -> None:
     parser.add_argument("manual_path", type=Path, help="Path to the PDF manual to ingest")
     args = parser.parse_args()
 
-    build_index(args.manual_path)
-    print(f"Index ready for {args.manual_path} in {config.STORAGE_DIR}")
+    ingest_and_report(args.manual_path)
 
 
 if __name__ == "__main__":
