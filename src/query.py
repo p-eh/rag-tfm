@@ -52,16 +52,10 @@ def _usage_from_response(response) -> dict:
     return {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
 
 
-def _prompt_refs(*prompts) -> dict:
-    """Name/version pairs for each non-None Langfuse prompt, for recording
-    which prompt versions produced a generation.
-
-    `update_current_generation(prompt=...)` doesn't attach here: it needs an
-    already-open generation span, but LlamaIndexInstrumentor only creates
-    that span for the duration of the `llm.chat()`/`llm.complete()` call
-    itself, which hasn't started yet at this point - confirmed empty
-    prompt_name/prompt_version on a real trace. Recording refs as span input
-    instead is the documented fallback (see design.md's Decisions).
+def _prompt_versions_for_trace(*prompts) -> dict:
+    """{"<name>_version": version} for each Langfuse-fetched prompt, recorded on
+    the llm_generation span so a trace shows which prompt versions produced it.
+    Prompts from the local-file fallback (None) are skipped.
     """
     return {f"{prompt.name}_version": prompt.version for prompt in prompts if prompt is not None}
 
@@ -78,7 +72,7 @@ def _ask_with_context(user_prompt: str, template_prompt=None):
 
     llm = _build_llm()
     with tracing.traced_span(
-        "llm_generation", **_prompt_refs(system_langfuse_prompt, template_prompt)
+        "llm_generation", **_prompt_versions_for_trace(system_langfuse_prompt, template_prompt)
     ):
         return llm.chat(
             [

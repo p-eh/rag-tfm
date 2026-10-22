@@ -16,7 +16,7 @@ If Langfuse is unreachable, not configured, or the named prompts don't exist the
 
 #### Scenario: Langfuse unreachable during prompt fetch
 - **WHEN** the ask command answers a question and Langfuse cannot be reached while fetching a prompt
-- **THEN** the system falls back to the local `SYSTEM_PROMPT.md` / `PROMPT_TEMPLATE.md` content and still returns an answer
+- **THEN** the system falls back to the local `SYSTEM_PROMPT.md` / `PROMPT_TEMPLATE.md` content, prints a warning naming the prompt that couldn't be fetched (once per prompt per run), and still returns an answer
 
 #### Scenario: Langfuse not configured
 - **WHEN** no Langfuse credentials are configured
