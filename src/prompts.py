@@ -47,8 +47,9 @@ def _fetch_langfuse_prompt():
 
 
 def build_chat_messages(question: str, context: str) -> tuple[str, str, object | None]:
-    """Returns (system message, user message, Langfuse prompt object or None
-    if the messages came from the local-file fallback).
+    """Returns (system message, user message, prompt source). The prompt source
+    is the Langfuse prompt object the messages were compiled from, used only to
+    link the generation; None when they came from the local-file fallback.
     """
     prompt = _fetch_langfuse_prompt()
     if prompt is not None:

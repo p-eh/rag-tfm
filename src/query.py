@@ -60,14 +60,14 @@ def _ask_with_context(question: str, context: str):
     """
     from llama_index.core.llms import ChatMessage, MessageRole
 
-    system_prompt, user_prompt, langfuse_prompt = build_chat_messages(question, context)
+    system_message, user_message, prompt_source = build_chat_messages(question, context)
 
     llm = _build_llm()
-    with tracing.linked_prompt(langfuse_prompt):
+    with tracing.linked_prompt(prompt_source):
         return llm.chat(
             [
-                ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
-                ChatMessage(role=MessageRole.USER, content=user_prompt),
+                ChatMessage(role=MessageRole.SYSTEM, content=system_message),
+                ChatMessage(role=MessageRole.USER, content=user_message),
             ]
         )
 
